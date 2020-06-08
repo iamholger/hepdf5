@@ -83,18 +83,19 @@ namespace HepDF5
 
     void create_datasets(HighFive::File  & file, vector<string> wnames = {}, int compression=4, size_t chunksize=32)
     {
-        file.createGroup("particle");
-        file.createGroup("vertex");
-        file.createGroup("event");
-        vector<string> dsname_dbl = 
-        { 
-            "particle/px", "particle/py", "particle/pz", "particle/E",
-            "particle/m"
-        };  // "event/weight"
-
         DataSetCreateProps props;
         props.add(Deflate(compression));
         props.add(Chunking(std::vector<hsize_t>{chunksize}));
+        
+        file.createGroup("particle");
+        file.createGroup("vertex");
+        file.createGroup("event");
+        
+        vector<string> dsname_dbl = 
+        { 
+            "particle/px", "particle/py", "particle/pz", "particle/E",
+            "particle/m", "vertex/x", "vertex/y", "vertex/z", "vertex/t",
+        };
         for (auto dsname : dsname_dbl)
         {
             file.createDataSet(dsname, DataSpace( {0}, {DataSpace::UNLIMITED}), AtomicType<double>(), props);
@@ -123,7 +124,11 @@ namespace HepDF5
         DataSetCreateProps wprops;
         wprops.add(Deflate(compression));
         wprops.add(Chunking(std::vector<hsize_t>{32,wnames.size()}));
-        file.createDataSet("event/weight", DataSpace( {0, wnames.size()}, {DataSpace::UNLIMITED, wnames.size()}), AtomicType<double>(), wprops);
+        file.createDataSet("event/weight",
+            DataSpace( 
+              {0, wnames.size()}, 
+              {DataSpace::UNLIMITED,
+              wnames.size()}), AtomicType<double>(), wprops);
     }
 
     void write_particles(HighFive::File  & file, vector<GenParticlePtr> const & parts)
@@ -199,13 +204,27 @@ namespace HepDF5
       status.reserve(nvtx);
       vid.reserve(nvtx);
 
+      vector<double> vx, vy, vz, vt;
+      vx.reserve(nvtx);
+      vy.reserve(nvtx);
+      vz.reserve(nvtx);
+      vt.reserve(nvtx);
+
       for (auto v : verts)
       {
         status.push_back(v->status());
         vid.push_back(v->id());
+        vx.push_back(v->position().x());
+        vy.push_back(v->position().y());
+        vz.push_back(v->position().z());
+        vt.push_back(v->position().t());
       }
       file.getDataSet("vertex/status")  .select({current}, {nvtx}).write(status);
       file.getDataSet("vertex/id")     .select({current}, {nvtx}).write(vid);
+      file.getDataSet("vertex/x")     .select({current}, {nvtx}).write(vx);
+      file.getDataSet("vertex/y")     .select({current}, {nvtx}).write(vy);
+      file.getDataSet("vertex/z")     .select({current}, {nvtx}).write(vz);
+      file.getDataSet("vertex/t")     .select({current}, {nvtx}).write(vt);
     }
 
     size_t load_part(File const & file, string const & path, size_t idx) 
