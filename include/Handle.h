@@ -18,11 +18,19 @@ namespace hepdf5
     std::vector<T> read_vector(size_t offset, size_t readsize, DataSet const & ds)
     {
         std::vector<T> vec;
-        vec.reserve(readsize);
+
+        vec.resize(readsize);
         ds.select({offset}, {readsize}).read(vec);
         return vec;
     }
     
+    template<typename T>
+    void read_vector(size_t offset, size_t readsize, DataSet const & ds, std::vector<T> & vec)
+    {
+        vec.resize(readsize);
+        ds.select({offset}, {readsize}).read(vec);
+    }
+
 
     class Handle
     {
@@ -50,7 +58,29 @@ namespace hepdf5
                 P_E          ( file_.getDataSet("particle/E")      ),
                 P_M          ( file_.getDataSet("particle/m")      ),
                 P_VTX_END    ( file_.getDataSet("particle/vtx_end")),
-                P_VTX_PROD   ( file_.getDataSet("particle/vtx_prod")) {};
+                P_VTX_PROD   ( file_.getDataSet("particle/vtx_prod"))
+        {
+            p_start   .reserve(1000000);
+            v_start   .reserve(1000000);
+            p_n       .reserve(1000000);
+            v_n       .reserve(1000000);
+            v_id      .reserve(1000000);
+            v_status  .reserve(1000000);
+            v_x       .reserve(1000000);
+            v_y       .reserve(1000000);
+            v_z       .reserve(1000000);
+            v_t       .reserve(1000000);
+            p_id      .reserve(1000000);
+            p_status  .reserve(1000000);
+            p_px      .reserve(1000000);
+            p_py      .reserve(1000000);
+            p_pz      .reserve(1000000);
+            p_e       .reserve(1000000);
+            p_m       .reserve(1000000);
+            p_vtx_end .reserve(1000000);
+            p_vtx_prod.reserve(1000000);
+            wgt.reserve(100000);
+        };
 
             long int nevents() {return H5Sget_simple_extent_npoints(H5Dget_space(P_N.getId()));};
             size_t nweights() {return H5Sget_simple_extent_npoints(H5Dget_space(file_.getDataSet("weight_names").getId()));};
@@ -85,13 +115,23 @@ namespace hepdf5
                 }
             }
     
-            std::vector<std::vector<double> > weights(size_t offset, size_t readsize)//; // TODO augment with columns
+            //std::vector<std::vector<double> > weights(size_t offset, size_t readsize)//; // TODO augment with columns
+            //{
+                //vector<vector<double> > e_weights;
+                //e_weights.reserve(readsize);
+                //this->WGT.select({offset, 0}, {readsize, this->nweights()}).read(e_weights);
+                //return e_weights;
+            //}
+
+            void fillBuffers(size_t first_event, size_t n_events);
+            void fillWeights(size_t first_event, size_t n_events)
             {
-                vector<vector<double> > e_weights;
-                e_weights.reserve(readsize);
-                this->WGT.select({offset, 0}, {readsize, this->nweights()}).read(e_weights);
-                return e_weights;
+                this->wgt.resize(n_events);
+                this->WGT.select({first_event, 0}, {n_events, this->nweights()}).read(this->wgt);
             }
+
+
+            void fillEvent(size_t ievent, GenEvent & evt);
 
         private:
             std::vector<size_t> const cols_;
@@ -116,6 +156,31 @@ namespace hepdf5
             DataSet const P_M;
             DataSet const P_VTX_END;
             DataSet const P_VTX_PROD;
+
+            size_t idxV;
+            size_t idxP;
+
+            std::vector<size_t> p_start   ;
+            std::vector<size_t> v_start   ;
+            std::vector<int>    p_n       ;
+            std::vector<int>    v_n       ;
+            std::vector<int>    v_id      ;
+            std::vector<int>    v_status  ;
+            std::vector<double> v_x       ;
+            std::vector<double> v_y       ;
+            std::vector<double> v_z       ;
+            std::vector<double> v_t       ;
+            std::vector<int>    p_id      ;
+            std::vector<int>    p_status  ;
+            std::vector<double> p_px      ;
+            std::vector<double> p_py      ;
+            std::vector<double> p_pz      ;
+            std::vector<double> p_e       ;
+            std::vector<double> p_m       ;
+            std::vector<int>    p_vtx_end ;
+            std::vector<int>    p_vtx_prod;
+            std::vector<std::vector<double> > wgt;
+
     };
     
     std::vector<GenEvent> readEvents(Handle & handle,  size_t first_event, size_t n_events);
