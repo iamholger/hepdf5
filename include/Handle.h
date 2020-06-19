@@ -1,8 +1,7 @@
 #pragma once
-
+#include <memory>
 #include <unordered_map>
 
-#include <highfive/H5File.hpp>
 #include <highfive/H5DataSet.hpp>
 using namespace HighFive;
 
@@ -11,6 +10,10 @@ using namespace HighFive;
 #include "HepMC3/Print.h"
 #include "HepMC3/GenParticle.h"
 using namespace HepMC3;
+
+#include "Communicator.h"
+#include "InputFile.h"
+#include "Keeper.h"
 
 namespace hepdf5
 {
@@ -37,8 +40,11 @@ namespace hepdf5
         public:
             explicit Handle(
                     std::string const & fname, 
-                    std::vector<size_t> const & cols = {}
-                    ) : cols_(cols), file_(File(fname, File::ReadOnly)),
+                    std::vector<size_t> const & cols = {},
+                    size_t readsize=1000
+                    )
+              :
+                comm_(Communicator()), cols_(cols), file_(InputFile(fname)),
                 P_START      ( file_.getDataSet("event/start_p")   ),
                 V_START      ( file_.getDataSet("event/start_v")   ),
                 P_N          ( file_.getDataSet("event/npart")     ),
@@ -58,7 +64,8 @@ namespace hepdf5
                 P_E          ( file_.getDataSet("particle/E")      ),
                 P_M          ( file_.getDataSet("particle/m")      ),
                 P_VTX_END    ( file_.getDataSet("particle/vtx_end")),
-                P_VTX_PROD   ( file_.getDataSet("particle/vtx_prod"))
+                P_VTX_PROD   ( file_.getDataSet("particle/vtx_prod")),
+                keeper_(Keeper(H5Sget_simple_extent_npoints(H5Dget_space(P_N.getId())), readsize, comm_.size(), comm_.rank()))
         {
             p_start   .reserve(1000000);
             v_start   .reserve(1000000);
@@ -80,11 +87,84 @@ namespace hepdf5
             p_vtx_end .reserve(1000000);
             p_vtx_prod.reserve(1000000);
             wgt.reserve(100000);
+            //keeper_ = Keeper(nevents, readsize, comm_.size(), comm_.rank());
         };
 
             long int nevents() {return H5Sget_simple_extent_npoints(H5Dget_space(P_N.getId()));};
             size_t nweights() {return H5Sget_simple_extent_npoints(H5Dget_space(file_.getDataSet("weight_names").getId()));};
-            
+
+            std::unique_ptr<GenEvent> nextEvent()
+            {
+
+                if ((this->keeper_.i_ev == 0) && (this->keeper_.i_strip == 0))
+                {
+                    auto [offset, rs] = this->keeper_.strips[0];
+                    this->fillBuffers(offset, rs);
+                }
+
+                if (this->keeper_.i_ev == this->keeper_.n_ev)
+                {
+
+                    if (this->keeper_.i_strip==this->keeper_.n_strip-1) return NULL;
+                    auto [offset, rs] = this->keeper_.strips[++(this->keeper_.i_strip)];
+                    this->fillBuffers(offset, rs);
+                    this->keeper_.n_ev=rs;
+                    this->keeper_.i_ev=0;
+                }
+                GenEvent evt_(Units::GEV,Units::MM);
+                this->fillEvent((this->keeper_.i_ev)++, evt_);
+                return std::make_unique<GenEvent>(evt_);
+            }
+
+            bool nextEvent(GenEvent & evt)
+            {
+                if ((this->keeper_.i_ev == 0) && (this->keeper_.i_strip == 0))
+                {
+                    auto [offset, rs] = this->keeper_.strips[0];
+                    this->fillBuffers(offset, rs);
+                }
+
+                if (this->keeper_.i_ev == this->keeper_.n_ev)
+                {
+
+                    if (this->keeper_.i_strip==this->keeper_.n_strip-1)
+                    {
+                      return false;
+                    }
+                    auto [offset, rs] = this->keeper_.strips[++(this->keeper_.i_strip)];
+                    this->fillBuffers(offset, rs);
+                    this->keeper_.n_ev=rs;
+                    this->keeper_.i_ev=0;
+                }
+
+                this->fillEvent((this->keeper_.i_ev)++, evt);
+                return true;
+            }
+
+            std::optional<GenEvent> optnextEvent()
+            {
+
+                if ((this->keeper_.i_ev == 0) && (this->keeper_.i_strip == 0))
+                {
+                    auto [offset, rs] = this->keeper_.strips[0];
+                    this->fillBuffers(offset, rs);
+                }
+
+                if (this->keeper_.i_ev == this->keeper_.n_ev)
+                {
+
+                    if (this->keeper_.i_strip==this->keeper_.n_strip-1) return std::nullopt;
+                    auto [offset, rs] = this->keeper_.strips[++(this->keeper_.i_strip)];
+                    this->fillBuffers(offset, rs);
+                    this->keeper_.n_ev=rs;
+                    this->keeper_.i_ev=0;
+                }
+
+                GenEvent evt_(Units::GEV,Units::MM);
+                this->fillEvent((this->keeper_.i_ev)++, evt_);
+                return std::optional<GenEvent>{evt_};
+            }
+
 
             template<typename T>
             std::vector<T> get(size_t offset, size_t readsize, std::string const & dsname)
@@ -133,9 +213,13 @@ namespace hepdf5
 
             void fillEvent(size_t ievent, GenEvent & evt);
 
+            int commsize() const {return this->comm_.size();}
+            int commrank() const {return this->comm_.rank();}
+
         private:
+            Communicator const comm_;
             std::vector<size_t> const cols_;
-            HighFive::File const file_;
+            InputFile const file_;
             DataSet const P_START;
             DataSet const V_START;
             DataSet const P_N;
@@ -156,6 +240,7 @@ namespace hepdf5
             DataSet const P_M;
             DataSet const P_VTX_END;
             DataSet const P_VTX_PROD;
+            Keeper keeper_;
 
             size_t idxV;
             size_t idxP;
@@ -180,7 +265,6 @@ namespace hepdf5
             std::vector<int>    p_vtx_end ;
             std::vector<int>    p_vtx_prod;
             std::vector<std::vector<double> > wgt;
-
     };
     
     std::vector<GenEvent> readEvents(Handle & handle,  size_t first_event, size_t n_events);
