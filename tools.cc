@@ -41,12 +41,26 @@ namespace HepDF5
 
     vector<string> weightnames_from_event(GenEvent const & evt)
     {
+      try
+      {
         return evt.weight_names();
+      }
+      catch (const std::exception& e) 
+      {
+        std::string base = "GENERIC_WEIGHT_NAME_";
+        size_t nweights = evt.weights().size();
+        vector<string> ret;
+        for (size_t i=0;i<nweights;++i)
+        {
+          ret.push_back(base + to_string(i));
+        }
+        return ret;
+      }
     }
 
     vector<string> weightnames_from_ascii_file(string const & fname)
     {
-        ReaderAsciiHepMC2 reader(fname);
+        ReaderAscii reader(fname);
         if (reader.failed()) 
         {
         }
@@ -81,7 +95,7 @@ namespace HepDF5
         return rc;
     }
 
-    void create_datasets(HighFive::File  & file, vector<string> wnames = {}, int compression=4, size_t chunksize=32)
+    void create_datasets(HighFive::File  & file, vector<string> wnames = {}, int compression=4, size_t chunksize=100000)
     {
         DataSetCreateProps props;
         props.add(Deflate(compression));
@@ -123,7 +137,7 @@ namespace HepDF5
         H5Easy::dump(file, "weight_names", wnames);
         DataSetCreateProps wprops;
         wprops.add(Deflate(compression));
-        wprops.add(Chunking(std::vector<hsize_t>{32,wnames.size()}));
+        wprops.add(Chunking(std::vector<hsize_t>{100000,wnames.size()}));
         file.createDataSet("event/weight",
             DataSpace( 
               {0, wnames.size()}, 
@@ -214,10 +228,20 @@ namespace HepDF5
       {
         status.push_back(v->status());
         vid.push_back(v->id());
-        vx.push_back(v->position().x());
-        vy.push_back(v->position().y());
-        vz.push_back(v->position().z());
-        vt.push_back(v->position().t());
+        if (v->has_set_position())
+        {
+          vx.push_back(v->position().x());
+          vy.push_back(v->position().y());
+          vz.push_back(v->position().z());
+          vt.push_back(v->position().t());
+        }
+        else
+        {
+          vx.push_back(0);
+          vy.push_back(0);
+          vz.push_back(0);
+          vt.push_back(0);
+        }
       }
       file.getDataSet("vertex/status")  .select({current}, {nvtx}).write(status);
       file.getDataSet("vertex/id")     .select({current}, {nvtx}).write(vid);
@@ -288,11 +312,12 @@ namespace HepDF5
         vector<GenVertexPtr>   wV;
         vector< vector<double> >   wW;
 
-        ReaderAsciiHepMC2 reader(fname);
+        ReaderAscii reader(fname);
         while (!reader.failed()) 
         {
             GenEvent evt;
             reader.read_event(evt);
+            evt.add_attribute("cycles", std::make_shared<IntAttribute>(0));
             if (reader.failed())  {
                 printf("End of file reached. Exit.\n");
                 break;
@@ -326,6 +351,8 @@ namespace HepDF5
             }
             
             iev++;
+
+            if (iev>1000) break;
             if ((iev+1)%msg_every==0)
             {
               cerr << "Events processed: " << iev+1 << "\r"; 
@@ -345,29 +372,29 @@ namespace HepDF5
 
 int main(int argc, const char* argv[]) 
 {
-    auto version = HepDF5::hepmc_version_from_file(argv[1]);
-    if (version==0)
-    {
-        cerr << "Unable to determine hepmc version from file " << argv[1] << " exiting.";
-        exit(1);
-    }
-    else if (version==2)
-    {
-        cerr << "HepMC version 2 detected on input file\n";
+    //auto version = HepDF5::hepmc_version_from_file(argv[1]);
+    //if (version==0)
+    //{
+        //cerr << "Unable to determine hepmc version from file " << argv[1] << " exiting.";
+        //exit(1);
+    //}
+    //else if (version==2)
+    //{
+        //cerr << "HepMC version 2 detected on input file\n";
         vector<string> const WN = HepDF5::weightnames_from_ascii_file(argv[1]);
         H5Easy::File outfile("myexample.h5", H5Easy::File::ReadWrite | H5Easy::File::Create| H5Easy::File::Truncate);
         HepDF5::create_datasets(outfile, WN, atoi(argv[3]), atoi(argv[4]));
         HepDF5::test(argv[1], outfile, atoi(argv[2]));
-    }
-    else if (version ==3)
-    {
-        cerr << "HepMC version 3 detected on input file\n";
-    }
-    else
-    {
-        cerr << "Unsupported HepMC version " << version << " detected on input file, exiting\n";
-        exit(1);
-    }
+    //}
+    //else if (version ==3)
+    //{
+        //cerr << "HepMC version 3 detected on input file\n";
+    //}
+    //else
+    //{
+        //cerr << "Unsupported HepMC version " << version << " detected on input file, exiting\n";
+        //exit(1);
+    //}
 
     cerr << "I am done.\n";
     return 0;
