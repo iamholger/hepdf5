@@ -15,6 +15,7 @@ using namespace HighFive;
 #include "HepMC3/GenVertex.h"
 #include "HepMC3/Print.h"
 #include "HepMC3/GenParticle.h"
+#include "HepMC3/WriterAscii.h"
 
 using namespace HepMC3;
 
@@ -24,7 +25,7 @@ namespace hepdf5 {
    
 
     // Read function, returns an Events struct --- this is for the new structure
-    void readEvents(Group& g_event, Group& g_vertex, Group& g_particle,  size_t first_event, size_t n_events, vector<string> const & wnames)
+    vector<GenEvent> readEvents(Group& g_event, Group& g_vertex, Group& g_particle,  size_t first_event, size_t n_events, vector<string> const & wnames)
     {
 
 
@@ -45,14 +46,20 @@ namespace hepdf5 {
         DataSet P_VTX_END    = g_particle.getDataSet("vtx_end");
         DataSet P_VTX_PROD   = g_particle.getDataSet("vtx_prod");
         
+        DataSet V_x     = g_vertex.getDataSet("x");
+        DataSet V_y     = g_vertex.getDataSet("y");
+        DataSet V_z     = g_vertex.getDataSet("z");
+        DataSet V_t     = g_vertex.getDataSet("t");
+        
         std::vector<size_t> v_start, p_start;
         std::vector<int>    v_n, p_n, v_id, p_id, v_status, p_status, p_vtx_end, p_vtx_prod;
-        std::vector<double> p_px, p_py, p_pz, p_e, p_m, wgt;
+        std::vector<double> p_px, p_py, p_pz, p_e, p_m, v_x, v_y, v_z, v_t;
         // Weights
         vector<vector<double> > e_weights;
         e_weights.reserve(n_events);
         // NOTE this could be augmented to read only a central weight
         WGT.select({first_event, 0}, {n_events, wnames.size()}).read(e_weights);
+
        
         std::vector<size_t> offset_e   = {first_event};
         std::vector<size_t> readsize_e = {n_events}   ;
@@ -86,6 +93,10 @@ namespace hepdf5 {
         p_vtx_prod.reserve(p_read);
         v_id      .reserve(v_read);
         v_status  .reserve(v_read);
+        v_x      .reserve(v_read);
+        v_y      .reserve(v_read);
+        v_z      .reserve(v_read);
+        v_t      .reserve(v_read);
         
         // Read dataset extends to vectors
         P_ID      .select(p_offset, p_readsize).read(p_id      );
@@ -99,20 +110,26 @@ namespace hepdf5 {
         P_VTX_PROD.select(p_offset, p_readsize).read(p_vtx_prod);
         V_ID      .select(v_offset, v_readsize).read(v_id      );
         V_STATUS  .select(v_offset, v_readsize).read(v_status  );
+        V_x  .select(v_offset, v_readsize).read(v_x  );
+        V_y  .select(v_offset, v_readsize).read(v_y  );
+        V_z  .select(v_offset, v_readsize).read(v_z  );
+        V_t  .select(v_offset, v_readsize).read(v_t  );
 
 
 
-        //Rivet::Log::setLevel("Rivet.AnalysisHandler", Rivet::Log::TRACE);
-  //double t0 = MPI_Wtime();
         size_t idxV(0), idxP(0);
         std::vector<GenVertexPtr> V;
         std::unordered_map<int,int> vmap;
-        // Event loop
+        
+        std::vector<GenEvent> EVENTS;
+        EVENTS.reserve(n_events);
+        //
         for (size_t nev=0; nev<n_events; ++nev)
         {
           for (unsigned int iv=idxV; iv < (v_n[nev]+idxV); ++iv)
           {
             GenVertexPtr v = std::make_shared<GenVertex>();
+            v->set_position({v_x[iv], v_y[iv], v_z[iv], v_t[iv]});
             v->set_id(        v_id[iv]);
             v->set_status(v_status[iv]);
             V.push_back(v);
@@ -128,19 +145,25 @@ namespace hepdf5 {
             if (p_vtx_end[ip]  !=0) V[vmap[ p_vtx_end[ip]]]->add_particle_in(p);
             if (p_vtx_prod[ip] !=0) V[vmap[p_vtx_prod[ip]]]->add_particle_out(p);
 
+            //Print::line(p);
           }
 
           idxV += v_n[nev];
           idxP += p_n[nev];
           
           GenEvent _evt(Units::GEV,Units::MM);
+
+          _evt.weights() = e_weights[nev];
           _evt.set_event_number(nev);
           for (auto v: V) _evt.add_vertex(v);
+          _evt.add_attribute("cycles", std::make_shared<IntAttribute>(1));
+          //Print::listing(_evt);
           //_evt.weights().push_back(wgt[nev]);
-          _evt.weights()= {wgt[nev]};
           V.clear();
           vmap.clear();
+          //EVENTS.push_back(_evt);
         }
+        return EVENTS;
     }
   //std::cout << "Processing loop took: " << t1-t0 << "\n";
 }
@@ -159,17 +182,22 @@ int main(int argc, char ** argv)
 
 
   std::vector<std::string> wnames = H5Easy::load<vector<string>>(file, "weight_names");
-  for (auto w : wnames) std::cerr << w << "\n";
+  //for (auto w : wnames) std::cerr << w << "\n";
  
-  unsigned int nread = 0;
+  unsigned int nread = 1;
   long int nEvents =  H5Sget_simple_extent_npoints(dspace);
   std::cout << "File contains " << nEvents << " events\n";
-  //if (argc>=2) nread=atoi(argv[2]);
-  //if (nread < nEvents) nEvents=nread;
+  if (argc>=2) nread=atoi(argv[2]);
+  if (nread < nEvents) nEvents=nread;
   std::cout << "Total number of ranks: " << size << "\n";
 
   //double t0 = MPI_Wtime();
-  hepdf5::readEvents(g_evt, g_vtx, g_part, 0, nEvents, wnames);
+  auto genevents = hepdf5::readEvents(g_evt, g_vtx, g_part, 0, nEvents, wnames);
+  //std::shared_ptr<GenRunInfo> run = std::make_shared<GenRunInfo>();;
+  //run->set_weight_names(wnames);
+  //WriterAscii writer("blabla.hepmc3", run);
+  ////for (auto g : genevents) Print::listing(g);
+  //for (auto g : genevents) writer.write_event(g);
   //double t1 = MPI_Wtime();
   //std::cout << "Processing took: " << t1-t0 << "\n";
 
